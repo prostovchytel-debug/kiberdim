@@ -66,3 +66,4 @@ declare s public.kd_sessions;ms bigint;begin
 end $$;
 revoke all on function public.kd_limit(text,integer,integer),public.kd_join(uuid,text,uuid,text,text,jsonb),public.kd_commit_attempt(uuid,text,integer,integer,jsonb,boolean),public.kd_session_action(uuid,uuid,text) from public,anon,authenticated;
 grant execute on function public.kd_limit(text,integer,integer),public.kd_join(uuid,text,uuid,text,text,jsonb),public.kd_commit_attempt(uuid,text,integer,integer,jsonb,boolean),public.kd_session_action(uuid,uuid,text) to service_role;
+

@@ -33,7 +33,7 @@ export function validateTest(input){
  return {id:t.id,title:t.title,subject:t.subject,topic:t.topic,grade:t.grade,timer:t.timer,feedback:t.feedback,shuffleQuestions:t.shuffleQuestions,shuffleAnswers:t.shuffleAnswers,scale:t.scale,sections:t.sections,questions:t.questions};
 }
 export function shuffle(xs){const out=[...xs];for(let i=out.length-1;i>0;i--){const j=crypto.getRandomValues(new Uint32Array(1))[0]%(i+1);[out[i],out[j]]=[out[j],out[i]];}return out;}
-export function variant(t){let qs=[];for(const s of t.sections){const pool=shuffle(t.questions.filter(q=>q.section===s.id)),seen=new Set();const usable=s.uniqueTypes?pool.filter(q=>{if(seen.has(q.type))return false;seen.add(q.type);return true}):pool;qs.push(...usable.slice(0,s.take||usable.length));}if(t.shuffleQuestions)qs=shuffle(qs);return qs.map(q=>({...structuredClone(q),options:(t.shuffleAnswers||q.type==='sequence')?shuffle(q.options):q.options,groups:t.shuffleAnswers?shuffle(q.groups):q.groups}));}
+export function variant(t){let qs=[];for(const s of t.sections){const pool=shuffle(t.questions.filter(q=>q.section===s.id)),seen=new Set();const usable=s.uniqueTypes?pool.filter(q=>{if(seen.has(q.type))return false;seen.add(q.type);return true}):pool;const chosen=usable.slice(0,s.take||usable.length);if(!t.shuffleQuestions)chosen.sort((a,b)=>t.questions.indexOf(a)-t.questions.indexOf(b));qs.push(...chosen);}if(t.shuffleQuestions)qs=shuffle(qs);return qs.map(q=>({...structuredClone(q),options:(t.shuffleAnswers||q.type==='sequence')?shuffle(q.options):q.options,groups:t.shuffleAnswers?shuffle(q.groups):q.groups}));}
 export function publicQuestion(q){const {correct,explanation,...safe}=q;return safe;}
 export function scoreQuestion(q,a){let fraction=0;
  if(q.type==='single')fraction=a===q.correct?1:0;
@@ -49,3 +49,4 @@ export function report(test,questions,answers){const score=answers.reduce((s,a)=
 }
 export function clock(session,now=Date.now()){return (session.status==='paused'?session.paused_at:now)-session.paused_ms;}
 export function equal(a,b){a=String(a);b=String(b);let n=a.length^b.length;for(let i=0;i<Math.max(a.length,b.length);i++)n|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);return n===0;}
+

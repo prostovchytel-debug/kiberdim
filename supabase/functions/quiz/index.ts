@@ -31,10 +31,11 @@ async function state(raw:string){
  }fail('Стан змінився. Оновіть сторінку.',409);
 }
 async function handle(b:any,u:any,ip:string,rawAuth:string){
+ if(!b||typeof b!=='object'||Array.isArray(b))fail('Неправильний формат запиту.');
  const action=b.action;
  if(action==='health')return {ok:true,version:'2.0.0'};
  if(action==='login'){
- const login=text(b.login,80).toLowerCase(),p=passwordValid(b.password);if(!/^[a-z0-9_.@-]{3,80}$/.test(login))fail('Перевірте логін.');await limit('login-ip:'+ip,200);await limit('login:'+login+':'+ip,20);const user=await one('kd_users?login=eq.'+encodeURIComponent(login));if(!await verify(user,p)||user.blocked)fail('Неправильний логін чи пароль або доступ призупинено.',401);return issue(user);
+ const login=text(b.login,80).toLowerCase(),p=String(b.password||'');if(!p||p.length>128)fail('Перевірте пароль.');if(!/^[a-z0-9_.@-]{3,80}$/.test(login))fail('Перевірте логін.');await limit('login-ip:'+ip,200);await limit('login:'+login+':'+ip,20);const user=await one('kd_users?login=eq.'+encodeURIComponent(login));if(!await verify(user,p)||user.blocked)fail('Неправильний логін чи пароль або доступ призупинено.',401);return issue(user);
  }
  if(action==='me')return {user:safe(u)};
  if(action==='logout'){if(rawAuth)await db('kd_auth?token_hash=eq.'+await digest(rawAuth),'DELETE');return {ok:true};}
@@ -50,6 +51,7 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  const name=u?.role==='student'?u.name:text(b.name,100).replace(/\s+/g,' '),cl=u?.role==='student'?u.class_name:text(b.className,30);if(name.split(' ').length<2)fail('Введіть прізвище та ім’я.');if(!s.classes.includes(cl))fail('Цей клас не бере участі в сеансі.');
  const t=token(),qs=variant(s.data);await rpc('kd_join',{p_session:s.id,p_token:await digest(t),p_user:u?.role==='student'?u.id:null,p_name:name,p_class:cl,p_data:{questions:qs,index:0,answers:[],started:null}});return {attemptToken:t,...await state(t)};
  }
+ if(action==='attemptStatus'){const {a,s}=await attempt(b.attemptToken);return {status:s.status,done:a.done};}
  if(action==='state')return state(b.attemptToken);
  if(action==='answer'){
  const {a,s,h}=await attempt(b.attemptToken),d=a.data;const idx=Number(b.index);
@@ -108,9 +110,10 @@ Deno.serve(async(req:Request)=>{
  const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, apikey, x-kd-token, authorization','Access-Control-Allow-Methods':'POST, OPTIONS','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
  if(req.method==='OPTIONS')return new Response('ok',{headers:cors});
  try{
- if(req.method!=='POST')fail('Використайте POST.',405);let raw='';const reader=req.body?.getReader();if(reader){let bytes=0;while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;if(bytes>350000){await reader.cancel();fail('Завеликий запит.',413);}raw+=new TextDecoder().decode(value,{stream:true});}}
+ if(req.method!=='POST')fail('Використайте POST.',405);let raw='';const decoder=new TextDecoder();const reader=req.body?.getReader();if(reader){let bytes=0;while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;if(bytes>350000){await reader.cancel();fail('Завеликий запит.',413);}raw+=decoder.decode(value,{stream:true});}raw+=decoder.decode();}
  let b;try{b=JSON.parse(raw)}catch{fail('Неправильний формат запиту.');}const rawAuth=req.headers.get('x-kd-token')||'',u=await auth(rawAuth);
  const ip=req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()||'unknown';
  return Response.json(await handle(b,u,ip,rawAuth),{headers:cors});
  }catch(e){return Response.json({error:e.message||'Помилка сервера.'},{status:e.status||400,headers:cors});}
 });
+
