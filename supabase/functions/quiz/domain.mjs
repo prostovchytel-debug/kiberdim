@@ -3,6 +3,7 @@ export const uid = () => crypto.randomUUID();
 export const text = (x,n=3000) => String(x??'').trim().slice(0,n);
 export function fail(message,status=400){const e=new Error(message);e.status=status;throw e;}
 export function imageUrl(value){const s=text(value,1500);if(!s)return '';let u;try{u=new URL(s)}catch{fail('Перевірте посилання на зображення.')}if(u.protocol!=='https:')fail('Зображення має використовувати HTTPS.');if(u.hostname==='drive.google.com'){const id=u.pathname.match(/\/file\/d\/([\w-]+)/)?.[1]||u.searchParams.get('id');if(id&&/^[\w-]+$/.test(id))return `https://drive.google.com/thumbnail?id=${id}&sz=w1200`;}return u.href;}
+export function contentText(value,max=12000){const s=String(value??'').replace(/\r\n?/g,'\n');if(s.length>max)fail(`Текст завеликий: максимум ${max} символів.`);return s;}
 const bool=v=>v===true;
 export function validateTest(input){
  const t=structuredClone(input||{});t.id=typeof t.id==='string'?t.id:uid();t.title=text(t.title,160);t.subject=text(t.subject,100);t.topic=text(t.topic,160);t.grade=Number(t.grade);if(!t.title||!t.subject||!Number.isInteger(t.grade)||t.grade<1||t.grade>12)fail('Укажіть назву, предмет і клас (1–12).');
@@ -13,8 +14,8 @@ export function validateTest(input){
  t.questions=t.questions.map(q=>{
   if(!TYPES[q.type]||!ids.has(q.section)||!q.id||qids.has(q.id))fail('Перевірте тип, розділ та ідентифікатор запитання.');qids.add(q.id);
   const seconds=Number(q.seconds??(q.type==='single'?30:45)),points=Number(q.points??1);if(!Number.isInteger(seconds)||seconds<5||seconds>600||seconds%5)fail('Таймер: від 5 до 600 секунд, крок 5.');if(!Number.isInteger(points)||points<1||points>100)fail('Бали за запитання: ціле число від 1 до 100.');
-  const opts=Array.isArray(q.options)?q.options.map(o=>({id:text(o.id,100),text:text(o.text,600),image:imageUrl(o.image)})):[];
-  if(opts.length<(q.type==='single'?3:2)||opts.length>20||new Set(opts.map(o=>o.id)).size!==opts.length||opts.some(o=>!o.id||(!o.text&&!o.image)))fail('Заповніть варіанти: для одиночного вибору — від 3, для інших типів — від 2.');
+  const opts=Array.isArray(q.options)?q.options.map(o=>({id:text(o.id,100),text:contentText(o.text,6000),format:o.format==='code'?'code':'text',image:imageUrl(o.image)})):[];
+  if(opts.length<(q.type==='single'?3:2)||opts.length>20||new Set(opts.map(o=>o.id)).size!==opts.length||opts.some(o=>!o.id||(!o.text.trim()&&!o.image)))fail('Заповніть варіанти: для одиночного вибору — від 3, для інших типів — від 2.');
   const keys=opts.map(o=>o.id),groups=Array.isArray(q.groups)?q.groups.map(g=>text(g,200)):[];let correct=q.correct;
   if(q.type==='single'&&!keys.includes(correct))fail('Позначте одну правильну відповідь.');
   if(['multi','sequence'].includes(q.type)&&(!Array.isArray(correct)||!correct.length||new Set(correct).size!==correct.length||correct.some(c=>!keys.includes(c))))fail('Позначте правильні відповіді.');
@@ -26,8 +27,8 @@ export function validateTest(input){
    if(q.type==='match'&&(groups.length!==keys.length||new Set(Object.values(correct)).size!==keys.length))fail('У відповідності кожна права частина використовується один раз.');
    if(q.type==='groups'&&Object.values(correct).every(v=>v===''))fail('Розмістіть хоча б один елемент у категорії.');
   }
-  const prompt=text(q.text);if(!prompt)fail('Запишіть текст кожного запитання.');
-  return {id:text(q.id,100),type:q.type,section:q.section,text:prompt,image:imageUrl(q.image),options:opts,groups,correct,seconds,points,explanation:text(q.explanation,1500)};
+  const prompt=contentText(q.text);if(!prompt.trim())fail('Запишіть текст кожного запитання.');
+  return {id:text(q.id,100),type:q.type,section:q.section,text:prompt,format:q.format==='code'?'code':'text',image:imageUrl(q.image),options:opts,groups,correct,seconds,points,explanation:contentText(q.explanation,6000)};
  });
  for(const s of t.sections){const qs=t.questions.filter(q=>q.section===s.id);if(!qs.length)fail(`Розділ «${s.name}» порожній.`);if(s.take>qs.length)fail(`У розділі «${s.name}» замало запитань.`);if(s.uniqueTypes&&(s.take||qs.length)>new Set(qs.map(q=>q.type)).size)fail(`У розділі «${s.name}» недостатньо різних типів.`);}
  return {id:t.id,title:t.title,subject:t.subject,topic:t.topic,grade:t.grade,timer:t.timer,feedback:t.feedback,shuffleQuestions:t.shuffleQuestions,shuffleAnswers:t.shuffleAnswers,scale:t.scale,sections:t.sections,questions:t.questions};

@@ -1,3 +1,4 @@
+import {validateSimulator,MAX_HTML_BYTES} from './simulator-domain.mjs';
 import {validateImport} from './admin-domain.mjs';
 import {validateTest,variant,publicQuestion,scoreQuestion,report,grade,clock,text,uid,equal,fail} from './domain.mjs';
 const URL=Deno.env.get('SUPABASE_URL')!, KEY=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -35,7 +36,7 @@ async function state(raw:string){
 async function handle(b:any,u:any,ip:string,rawAuth:string){
  if(!b||typeof b!=='object'||Array.isArray(b))fail('Неправильний формат запиту.');
  const action=b.action;
- if(action==='health')return {ok:true,version:'2.1.0'};
+ if(action==='health')return {ok:true,version:'2.2.0'};
  if(action==='login'){
  const login=text(b.login,80).toLowerCase(),p=String(b.password||'');if(!p||p.length>128)fail('Перевірте пароль.');if(!/^[a-z0-9_.@-]{3,80}$/.test(login))fail('Перевірте логін.');await limit('login-ip:'+ip,200);await limit('login:'+login+':'+ip,20);const user=await one('kd_users?login=eq.'+encodeURIComponent(login));if(!await verify(user,p)||user.blocked||user.deleted_at)fail('Неправильний логін чи пароль або доступ призупинено.',401);return issue(user);
  }
@@ -67,6 +68,26 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  }
  if(action==='history'){
  if(!u||u.role!=='student')fail('Увійдіть до учнівського профілю.',403);const aa=await db(`kd_attempts?user_id=eq.${u.id}&done=eq.true&order=created_at.desc&limit=200`);const result=[];for(const a of aa){const s=await one(`kd_sessions?id=eq.${a.session_id}`);result.push({id:a.id,title:s.title,subject:s.subject,date:a.finished_at,...report(s.data,a.data.questions,a.data.answers)});}return {results:result};
+ }
+ if(action==='simulators'){
+ const isAdmin=u?.role==='admin';if(b.deleted&&!isAdmin)admin(u);
+ const select='id,title,classes,subjects,topic,description,filename,published,created_at,updated_at,deleted_at';
+ return {simulators:await allRows(`kd_simulators?select=${select}&deleted_at=${b.deleted?'not.is.null':'is.null'}${isAdmin?'':'&published=eq.true'}&order=updated_at.desc,id`)};
+ }
+ if(action==='simulatorGet'){
+ const s=await one(`kd_simulators?id=eq.${ids(b.id)}&deleted_at=is.null${u?.role==='admin'?'':'&published=eq.true'}`);
+ if(!s)fail('Симулятор не оприлюднений або його видалено.',404);return {simulator:s};
+ }
+ if(action==='simulatorSave'){
+ admin(u);const id=ids(b.id),old=await one(`kd_simulators?id=eq.${id}`);if(old?.deleted_at)fail('Спочатку відновіть симулятор.',409);
+ const catalog=await allRows('kd_catalog?select=kind,name,deleted_at&order=id');const data=validateSimulator(b,catalog,!!old);
+ const values={...data,updated_at:new Date().toISOString()};
+ if(old)await db(`kd_simulators?id=eq.${id}&deleted_at=is.null`,'PATCH',values);else await db('kd_simulators','POST',{id,owner:u.id,...values});
+ return {ok:true,id};
+ }
+ if(action==='simulatorTrash'){
+ admin(u);const id=ids(b.id),old=await one(`kd_simulators?id=eq.${id}`);if(!old)fail('Симулятор не знайдено.',404);
+ await db(`kd_simulators?id=eq.${id}`,'PATCH',{deleted_at:b.restore===true?null:new Date().toISOString(),updated_at:new Date().toISOString()});return {ok:true};
  }
  if(action==='trash'){
  if(b.kind==='test')teacher(u);else admin(u);
@@ -135,8 +156,8 @@ Deno.serve(async(req:Request)=>{
  const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, apikey, x-kd-token, authorization','Access-Control-Allow-Methods':'POST, OPTIONS','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
  if(req.method==='OPTIONS')return new Response('ok',{headers:cors});
  try{
- if(req.method!=='POST')fail('Використайте POST.',405);let raw='';const decoder=new TextDecoder();const reader=req.body?.getReader();if(reader){let bytes=0;while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;if(bytes>350000){await reader.cancel();fail('Завеликий запит.',413);}raw+=decoder.decode(value,{stream:true});}raw+=decoder.decode();}
- let b;try{b=JSON.parse(raw)}catch{fail('Неправильний формат запиту.');}const rawAuth=req.headers.get('x-kd-token')||'',u=await auth(rawAuth);
+ if(req.method!=='POST')fail('Використайте POST.',405);const rawAuth=req.headers.get('x-kd-token')||'',u=await auth(rawAuth);let raw='';const decoder=new TextDecoder();const reader=req.body?.getReader();if(reader){let bytes=0;while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;if(bytes>(u?.role==='admin'?MAX_HTML_BYTES*6+10000:350000)){await reader.cancel();fail('Завеликий запит.',413);}raw+=decoder.decode(value,{stream:true});}raw+=decoder.decode();}
+ let b;try{b=JSON.parse(raw)}catch{fail('Неправильний формат запиту.');}
  const ip=req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()||'unknown';
  return Response.json(await handle(b,u,ip,rawAuth),{headers:cors});
  }catch(e){return Response.json({error:e.message||'Помилка сервера.'},{status:e.status||400,headers:cors});}
