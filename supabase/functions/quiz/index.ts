@@ -22,7 +22,7 @@ function admin(u:any){if(u?.role!=='admin')fail('Лише адміністрат
 const ids=(s:unknown)=>{const x=String(s||'');if(!/^[a-f0-9-]{36}$/.test(x))fail('Неправильний ідентифікатор.');return x;};
 const list=(x:unknown,n=40)=>{if(!Array.isArray(x)||x.length>n||x.some(v=>typeof v!=='string'||!v.trim()||v.length>100))fail('Перевірте список.');return [...new Set(x.map(v=>v.trim()))];};
 async function owned(table:string,id:unknown,u:any){const r=await one(`${table}?id=eq.${ids(id)}&owner=eq.${u.id}`);if(!r)fail('Запис не знайдено.',404);return r;}
-async function attempt(raw:string){if(typeof raw!=='string'||raw.length!==64)fail('Спробу не знайдено.',404);const h=await digest(raw);const a=await one(`kd_attempts?token_hash=eq.${h}`);if(!a)fail('Спробу не знайдено.',404);const s=await one(`kd_sessions?id=eq.${a.session_id}`);return {a,s,h};}
+async function attempt(raw:string){if(typeof raw!=='string'||raw.length!==64)fail('Спробу не знайдено.',404);const h=await digest(raw);const a=await one(`kd_attempts?token_hash=eq.${h}&deleted_at=is.null`);if(!a)fail('Спробу не знайдено.',404);const s=await one(`kd_sessions?id=eq.${a.session_id}&deleted_at=is.null`);if(!s)fail("Сеанс видалено.",404);return {a,s,h};}
 async function state(raw:string){
  for(let retry=0;retry<3;retry++){
  const {a,s,h}=await attempt(raw);const d=a.data;
@@ -67,7 +67,7 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  const done=d.index===d.questions.length;const ok=await rpc('kd_commit_attempt',{p_id:a.id,p_token:h,p_revision:a.revision,p_session_revision:s.revision,p_data:d,p_done:done});if(!ok)fail('Стан змінився. Спробуйте надіслати відповідь ще раз.',409);return {accepted:true,done,index:d.index,feedback:s.data.feedback?review:null};
  }
  if(action==='history'){
- if(!u||u.role!=='student')fail('Увійдіть до учнівського профілю.',403);const aa=await db(`kd_attempts?user_id=eq.${u.id}&done=eq.true&order=created_at.desc&limit=200`);const result=[];for(const a of aa){const s=await one(`kd_sessions?id=eq.${a.session_id}`);result.push({id:a.id,title:s.title,subject:s.subject,date:a.finished_at,...report(s.data,a.data.questions,a.data.answers)});}return {results:result};
+ if(!u||u.role!=='student')fail('Увійдіть до учнівського профілю.',403);const aa=await db(`kd_attempts?user_id=eq.${u.id}&deleted_at=is.null&done=eq.true&order=created_at.desc&limit=200`);const result=[];for(const a of aa){const s=await one(`kd_sessions?id=eq.${a.session_id}&deleted_at=is.null`);if(!s)continue;result.push({id:a.id,title:s.title,subject:s.subject,date:a.finished_at,...report(s.data,a.data.questions,a.data.answers)});}return {results:result};
  }
  if(action==='simulators'){
  const isAdmin=u?.role==='admin';if(b.deleted&&!isAdmin)admin(u);
@@ -126,7 +126,14 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  const name=text(b.name,100),subjects=user.role==='student'?[]:list(b.subjects),class_name=user.role==='student'?text(b.className,30):'';if(!name||user.role==='student'&&!class_name)fail('Заповніть ім’я та клас.');await db(`kd_users?id=eq.${user.id}`,'PATCH',{name,subjects,class_name});return {ok:true};
  }
  teacher(u);
- if(action==='tests')return {tests:await db(`kd_tests?owner=eq.${u.id}&deleted_at=is.null&order=updated_at.desc`),sessions:await db(`kd_sessions?owner=eq.${u.id}&select=id,title,subject,code,classes,status,created_at,ended_at&order=created_at.desc&limit=200`)};
+ if(action==='resultTrash'){await rpc('kd_trash_result',{p_actor:u.id,p_kind:b.kind,p_id:ids(b.id),p_restore:b.restore===true});return {ok:true};}
+ if(action==='deletedResults'){
+ const ss=await allRows(`kd_sessions?owner=eq.${u.id}&order=created_at.desc,id`),sessions=[],results=[];
+ for(const s of ss){if(s.deleted_at){sessions.push({id:s.id,title:s.title,classes:s.classes,deleted_at:s.deleted_at});continue;}
+ const aa=await allRows(`kd_attempts?session_id=eq.${s.id}&deleted_at=not.is.null&select=id,name,class_name,deleted_at&order=deleted_at.desc,id`);
+ results.push(...aa.map((a:any)=>({...a,title:s.title,sessionId:s.id})));}return {sessions,results};
+ }
+ if(action==='tests')return {tests:await db(`kd_tests?owner=eq.${u.id}&deleted_at=is.null&order=updated_at.desc`),sessions:await db(`kd_sessions?owner=eq.${u.id}&deleted_at=is.null&select=id,title,subject,code,classes,status,created_at,ended_at&order=created_at.desc&limit=200`)};
  if(action==='saveTest'){
  const t=validateTest(b.test);ids(t.id);if(u.role!=='admin'&&!u.subjects.includes(t.subject))fail('Оберіть предмет зі своєї картки.',403);
  const existing=await one(`kd_tests?id=eq.${t.id}`);if(existing?.deleted_at)fail('Спочатку відновіть тест у розділі «Видалені».',409);if(existing&&existing.owner!==u.id)fail('Цей тест належить іншому вчителю.',403);
@@ -138,14 +145,14 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  }
  if(action==='sessionAction'){await owned('kd_sessions',b.id,u);if(!['pause','resume','close','cancel'].includes(b.command))fail('Невідома дія.');await rpc('kd_session_action',{p_id:b.id,p_owner:u.id,p_action:b.command});return {ok:true};}
  if(action==='sessionReport'){
- const s=await owned('kd_sessions',b.id,u),aa=await db(`kd_attempts?session_id=eq.${s.id}&order=created_at&limit=1000`);const students=aa.map((a:any)=>({id:a.id,userId:a.user_id,name:a.name,className:a.class_name,done:a.done,index:a.data.index,count:a.data.questions.length,created:a.created_at,result:a.done?report(s.data,a.data.questions,a.data.answers):null,answers:a.data.answers.map((v:any)=>({id:v.id,type:v.type,section:v.section,points:v.points,max:v.max,value:v.value,expired:v.expired})),questionIds:a.data.questions.map((q:any)=>q.id)}));
+ const s=await owned('kd_sessions',b.id,u);if(s.deleted_at)fail('Сеанс видалено.',404);const aa=await db(`kd_attempts?session_id=eq.${s.id}&deleted_at=is.null&order=created_at&limit=1000`);const students=aa.map((a:any)=>({id:a.id,userId:a.user_id,name:a.name,className:a.class_name,done:a.done,index:a.data.index,count:a.data.questions.length,created:a.created_at,result:a.done?report(s.data,a.data.questions,a.data.answers):null,answers:a.data.answers.map((v:any)=>({id:v.id,type:v.type,section:v.section,points:v.points,max:v.max,value:v.value,expired:v.expired})),questionIds:a.data.questions.map((q:any)=>q.id)}));
  const enrolled=await db(`kd_users?role=eq.student&blocked=eq.false&deleted_at=is.null&select=id,name,class_name`);const roster=enrolled.filter((a:any)=>s.classes.includes(a.class_name));return {session:{id:s.id,title:s.title,subject:s.subject,code:s.code,status:s.status,classes:s.classes,created:s.created_at,scale:s.data.scale},students,roster,sections:s.data.sections,questions:s.data.questions};
  }
  if(action==='journal'){
- const ss=await db(`kd_sessions?owner=eq.${u.id}&order=created_at&limit=200`),columns=[],rows=new Map();
+ const ss=await db(`kd_sessions?owner=eq.${u.id}&deleted_at=is.null&order=created_at&limit=200`),columns=[],rows=new Map();
  const roster=await db('kd_users?role=eq.student&blocked=eq.false&deleted_at=is.null&select=id,name,class_name');
- for(const s of ss){const aa=await db(`kd_attempts?session_id=eq.${s.id}&order=created_at&limit=1000`);if(s.status==='cancelled'&&!aa.some((a:any)=>a.done))continue;columns.push({id:s.id,title:s.title,subject:s.subject,classes:s.classes,date:s.created_at,status:s.status,scale:s.data.scale});for(const r of roster.filter((r:any)=>s.classes.includes(r.class_name)))if(!rows.has(r.id))rows.set(r.id,{id:r.id,name:r.name,className:r.class_name,verified:true,cells:{}});
- for(const a of aa){const key=a.user_id||'guest:'+a.class_name+':'+a.name;const row=rows.get(key)||{id:key,name:a.name,className:a.class_name,verified:!!a.user_id,cells:{}};const rr=a.done?report(s.data,a.data.questions,a.data.answers):null;const previous=row.cells[s.id];if(!previous||rr)row.cells[s.id]=rr?{mark:rr.mark,level:rr.level,percent:rr.percent,status:'done'}:{status:s.status==='cancelled'?'cancelled':s.status==='closed'?'missing':'active'};rows.set(key,row);}
+ for(const s of ss){const aa=await db(`kd_attempts?session_id=eq.${s.id}&deleted_at=is.null&order=created_at&limit=1000`);if(s.status==='cancelled'&&!aa.some((a:any)=>a.done))continue;columns.push({id:s.id,title:s.title,subject:s.subject,classes:s.classes,date:s.created_at,status:s.status,scale:s.data.scale});for(const r of roster.filter((r:any)=>s.classes.includes(r.class_name)))if(!rows.has(r.id))rows.set(r.id,{id:r.id,name:r.name,className:r.class_name,verified:true,cells:{}});
+ for(const a of aa){const key=a.user_id||'guest:'+a.class_name+':'+a.name;const row=rows.get(key)||{id:key,name:a.name,className:a.class_name,verified:!!a.user_id,cells:{}};const rr=a.done?report(s.data,a.data.questions,a.data.answers):null;const previous=row.cells[s.id];if(!previous||rr)row.cells[s.id]=rr?{attemptId:a.id,mark:rr.mark,level:rr.level,percent:rr.percent,status:'done'}:{attemptId:a.id,status:s.status==='cancelled'?'cancelled':s.status==='closed'?'missing':'active'};rows.set(key,row);}
  }
  for(const row of rows.values())for(const s of columns)if(s.classes.includes(row.className)&&!row.cells[s.id])row.cells[s.id]={status:s.status==='cancelled'?'cancelled':s.status==='closed'?'missing':'waiting'};
  return {columns,rows:[...rows.values()].sort((a,b)=>a.className.localeCompare(b.className,'uk')||a.name.localeCompare(b.name,'uk'))};
