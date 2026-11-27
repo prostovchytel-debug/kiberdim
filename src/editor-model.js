@@ -24,6 +24,7 @@ export function testIssues(t){
  if(!String(t.title||'').trim())add(null,'title','Укажіть назву тесту.');
  if(!String(t.subject||'').trim())add(null,'subject','Оберіть предмет.');
  if(!Number.isInteger(+t.grade)||+t.grade<1||+t.grade>12)add(null,'grade','Клас має бути від 1 до 12.');
+ if(t.grades!=null&&(!Array.isArray(t.grades)||!t.grades.length||t.grades.some(g=>!Number.isInteger(g)||g<1||g>12)))add(null,'grade','Оберіть принаймні одну паралель (1–12).');
  const sections=t.sections||[],questions=t.questions||[];
  if(!sections.length||sections.length>30)add(null,'sections','Потрібно від 1 до 30 розділів.');
  if(!questions.length||questions.length>200)add(null,'questions','Потрібно від 1 до 200 запитань.');

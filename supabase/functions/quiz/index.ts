@@ -1,3 +1,4 @@
+import {solveSelection} from './selection.js';
 import {studentReport,diagnosticIssues} from './diagnostics-model.js';
 import {prepareDraft} from './editor-model.js';
 import {validateSimulator,MAX_HTML_BYTES} from './simulator-domain.mjs';
@@ -38,7 +39,7 @@ async function state(raw:string){
 async function handle(b:any,u:any,ip:string,rawAuth:string){
  if(!b||typeof b!=='object'||Array.isArray(b))fail('Неправильний формат запиту.');
  const action=b.action;
- if(action==='health')return {ok:true,version:'2.3.0'};
+ if(action==='health')return {ok:true,version:'2.4.0'};
  if(action==='login'){
  const login=text(b.login,80).toLowerCase(),p=String(b.password||'');if(!p||p.length>128)fail('Перевірте пароль.');if(!/^[a-z0-9_.@-]{3,80}$/.test(login))fail('Перевірте логін.');await limit('login-ip:'+ip,200);await limit('login:'+login+':'+ip,20);const user=await one('kd_users?login=eq.'+encodeURIComponent(login));if(!await verify(user,p)||user.blocked||user.deleted_at)fail('Неправильний логін чи пароль або доступ призупинено.',401);return issue(user);
  }
@@ -156,11 +157,11 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  if(action==='saveTest'){
  const t=b.draft===true?prepareDraft(b.test):validateTest(b.test);t.isDraft=b.draft===true;ids(t.id);if(u.role!=='admin'&&!u.subjects.includes(t.subject))fail('Оберіть предмет зі своєї картки.',403);
  const existing=await one(`kd_tests?id=eq.${t.id}`);if(existing?.deleted_at)fail('Спочатку відновіть тест у розділі «Видалені».',409);if(existing&&existing.owner!==u.id)fail('Цей тест належить іншому вчителю.',403);
- if(existing)await db(`kd_tests?id=eq.${t.id}&owner=eq.${u.id}`,'PATCH',{data:t,updated_at:new Date().toISOString()});else await db('kd_tests','POST',{id:t.id,owner:u.id,data:t});return {test:t};
+ t.author=u.name;if(existing)await db(`kd_tests?id=eq.${t.id}&owner=eq.${u.id}`,'PATCH',{data:t,updated_at:new Date().toISOString()});else await db('kd_tests','POST',{id:t.id,owner:u.id,data:t});return {test:t};
  }
  if(action==='launch'){
  const t=await owned('kd_tests',b.id,u),classes=list(b.classes);if(!classes.length)fail('Оберіть класи.');const catalog=await db('kd_catalog?kind=eq.class&deleted_at=is.null');if(classes.some(c=>!catalog.some((x:any)=>x.name===c)))fail('Додайте клас у довідник адміністратора.');
- if(t.deleted_at)fail('Тест видалено.',404);if(t.data.isDraft)fail('Спочатку збережіть готовий тест.');const data=validateTest(t.data);for(let i=0;i<8;i++){const code=String(100000+crypto.getRandomValues(new Uint32Array(1))[0]%900000);try{const [s]=await db('kd_sessions','POST',{owner:u.id,test_id:t.id,code,title:data.title,subject:data.subject,classes,data});return {session:{id:s.id,code:s.code,title:s.title}};}catch(e){if(e.status!==409)throw e;}}fail('Не вдалося створити код. Повторіть запуск.');
+ if(t.deleted_at)fail('Тест видалено.',404);if(t.data.isDraft)fail('Спочатку збережіть готовий тест.');const data=validateTest(t.data);if(b.plan){solveSelection(data,b.plan);data.launchPlan=b.plan;}for(let i=0;i<8;i++){const code=String(100000+crypto.getRandomValues(new Uint32Array(1))[0]%900000);try{const [s]=await db('kd_sessions','POST',{owner:u.id,test_id:t.id,code,title:data.title,subject:data.subject,classes,data});return {session:{id:s.id,code:s.code,title:s.title}};}catch(e){if(e.status!==409)throw e;}}fail('Не вдалося створити код. Повторіть запуск.');
  }
  if(action==='sessionAction'){await owned('kd_sessions',b.id,u);if(!['pause','resume','close','cancel'].includes(b.command))fail('Невідома дія.');await rpc('kd_session_action',{p_id:b.id,p_owner:u.id,p_action:b.command});return {ok:true};}
  if(action==='sessionReport'){

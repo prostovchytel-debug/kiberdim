@@ -1,4 +1,5 @@
-import {diagnosticReport,diagnosticFocus} from './diagnostics-model.js';
+import {solveSelection} from './selection.js';
+import {assignedIds,diagnosticReport,diagnosticFocus} from './diagnostics-model.js';
 import {testIssues} from './editor-model.js';
 export const TYPES = {single:'Одна правильна',multi:'Кілька правильних',match:'Відповідність',sequence:'Послідовність',groups:'Категорії'};
 export const uid = () => crypto.randomUUID();
@@ -32,14 +33,14 @@ export function validateTest(input){
   }
   const prompt=contentText(q.text);if(!prompt.trim()&&!q.image)fail('Запишіть текст кожного запитання.');
   const groupItems=Array.isArray(q.groupItems)?groups.map(id=>{const g=q.groupItems.find(g=>g.id===id);if(!g)fail('Не знайдено категорію / праву частину.');return {id,text:contentText(g.text,6000),format:g.format==='code'?'code':'text',image:imageUrl(g.image)};}):undefined;
-  return {skillId:q.skillId||'',resultGroupId:q.resultGroupId||'',groupItems,matchMode:q.matchMode==='drag'?'drag':'lines',skill:text(q.skill,500),id:text(q.id,100),type:q.type,section:q.section,text:prompt,format:q.format==='code'?'code':'text',image:imageUrl(q.image),options:opts,groups,correct,seconds,points,explanation:contentText(q.explanation,6000)};
+  return {skillIds:assignedIds(q,'skillId'),resultGroupIds:assignedIds(q,'resultGroupId'),skillId:q.skillId||'',resultGroupId:q.resultGroupId||'',groupItems,matchMode:q.matchMode==='drag'?'drag':'lines',skill:text(q.skill,500),id:text(q.id,100),type:q.type,section:q.section,text:prompt,format:q.format==='code'?'code':'text',image:imageUrl(q.image),options:opts,groups,correct,seconds,points,explanation:contentText(q.explanation,6000)};
  });
  for(const s of t.sections){const qs=t.questions.filter(q=>q.section===s.id);if(!qs.length)fail(`Розділ «${s.name}» порожній.`);if(s.take>qs.length)fail(`У розділі «${s.name}» замало запитань.`);if(s.uniqueTypes&&(s.take||qs.length)>new Set(qs.map(q=>q.type)).size)fail(`У розділі «${s.name}» недостатньо різних типів.`);}
- return {diagnostics:t.diagnostics,id:t.id,title:t.title,subject:t.subject,topic:t.topic,grade:t.grade,timer:t.timer,feedback:t.feedback,shuffleQuestions:t.shuffleQuestions,shuffleAnswers:t.shuffleAnswers,scale:t.scale,sections:t.sections,questions:t.questions};
+ return {author:text(t.author,180),grades:t.grades||[t.grade],diagnostics:t.diagnostics,id:t.id,title:t.title,subject:t.subject,topic:t.topic,grade:t.grade,timer:t.timer,feedback:t.feedback,shuffleQuestions:t.shuffleQuestions,shuffleAnswers:t.shuffleAnswers,scale:t.scale,sections:t.sections,questions:t.questions};
 }
 export function shuffle(xs){const out=[...xs];for(let i=out.length-1;i>0;i--){const j=crypto.getRandomValues(new Uint32Array(1))[0]%(i+1);[out[i],out[j]]=[out[j],out[i]];}return out;}
-export function variant(t){let qs=[];for(const s of t.sections){const pool=shuffle(t.questions.filter(q=>q.section===s.id)),seen=new Set();const usable=s.uniqueTypes?pool.filter(q=>{if(seen.has(q.type))return false;seen.add(q.type);return true}):pool;const chosen=usable.slice(0,s.take||usable.length);if(!t.shuffleQuestions)chosen.sort((a,b)=>t.questions.indexOf(a)-t.questions.indexOf(b));qs.push(...chosen);}if(t.shuffleQuestions)qs=shuffle(qs);return qs.map(q=>({...structuredClone(q),options:(t.shuffleAnswers||q.type==='sequence')?shuffle(q.options):q.options,groups:(t.shuffleAnswers||q.type==='match')?shuffle(q.groups):q.groups}));}
-export function publicQuestion(q){const {correct,explanation,skill,skillId,resultGroupId,...safe}=q;if(safe.groupItems)safe.groupItems=safe.groups.map(id=>safe.groupItems.find(g=>g.id===id));return safe;}
+export function variant(t){let qs=[];for(const s of t.sections){const pool=shuffle(t.questions.filter(q=>q.section===s.id)),seen=new Set();const usable=s.uniqueTypes?pool.filter(q=>{if(seen.has(q.type))return false;seen.add(q.type);return true}):pool;const chosen=usable.slice(0,s.take||usable.length);if(!t.shuffleQuestions)chosen.sort((a,b)=>t.questions.indexOf(a)-t.questions.indexOf(b));qs.push(...chosen);}if(t.launchPlan)qs=solveSelection(t,t.launchPlan,shuffle);if(t.shuffleQuestions)qs=shuffle(qs);else qs.sort((a,b)=>t.questions.findIndex(q=>q.id===a.id)-t.questions.findIndex(q=>q.id===b.id));return qs.map(q=>({...structuredClone(q),options:(t.shuffleAnswers||q.type==='sequence')?shuffle(q.options):q.options,groups:(t.shuffleAnswers||q.type==='match')?shuffle(q.groups):q.groups}));}
+export function publicQuestion(q){const {correct,explanation,skill,skillId,resultGroupId,skillIds,resultGroupIds,...safe}=q;if(safe.groupItems)safe.groupItems=safe.groups.map(id=>safe.groupItems.find(g=>g.id===id));return safe;}
 export function scoreQuestion(q,a){let fraction=0;
  if(q.type==='single')fraction=a===q.correct?1:0;
  if(q.type==='multi')fraction=Array.isArray(a)&&new Set(a).size===a.length&&a.length===q.correct.length&&q.correct.every(id=>a.includes(id))?1:0;
