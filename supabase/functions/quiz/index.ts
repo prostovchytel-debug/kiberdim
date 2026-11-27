@@ -1,3 +1,4 @@
+import {studentReport,diagnosticIssues} from './diagnostics-model.js';
 import {prepareDraft} from './editor-model.js';
 import {validateSimulator,MAX_HTML_BYTES} from './simulator-domain.mjs';
 import {validateImport} from './admin-domain.mjs';
@@ -29,7 +30,7 @@ async function state(raw:string){
  const {a,s,h}=await attempt(raw);const d=a.data;
  if(!a.done&&s.status==='active'&&d.started===null){d.started=clock(s);const ok=await rpc('kd_commit_attempt',{p_id:a.id,p_token:h,p_revision:a.revision,p_session_revision:s.revision,p_data:d,p_done:false});if(!ok)continue;}
  const r={id:a.id,title:s.title,subject:s.subject,status:s.status,done:a.done,index:d.index,count:d.questions.length,timer:s.data.timer,feedback:s.data.feedback,scale:s.data.scale,name:a.name,className:a.class_name,serverNow:Date.now()};
- if(a.done)return {...r,result:report(s.data,d.questions,d.answers)};
+ if(a.done)return {...r,result:{...studentReport(report(s.data,d.questions,d.answers)),teacherComment:a.comment_visible?a.teacher_comment||'':''}};
  if(s.status==='closed'||s.status==='cancelled')return {...r,stopped:true};
  const q=d.questions[d.index];return {...r,question:publicQuestion(q),remainingMs:s.data.timer?Math.max(0,q.seconds*1000-(clock(s)-d.started)):null};
  }fail('Стан змінився. Оновіть сторінку.',409);
@@ -37,7 +38,7 @@ async function state(raw:string){
 async function handle(b:any,u:any,ip:string,rawAuth:string){
  if(!b||typeof b!=='object'||Array.isArray(b))fail('Неправильний формат запиту.');
  const action=b.action;
- if(action==='health')return {ok:true,version:'2.2.0'};
+ if(action==='health')return {ok:true,version:'2.3.0'};
  if(action==='login'){
  const login=text(b.login,80).toLowerCase(),p=String(b.password||'');if(!p||p.length>128)fail('Перевірте пароль.');if(!/^[a-z0-9_.@-]{3,80}$/.test(login))fail('Перевірте логін.');await limit('login-ip:'+ip,200);await limit('login:'+login+':'+ip,20);const user=await one('kd_users?login=eq.'+encodeURIComponent(login));if(!await verify(user,p)||user.blocked||user.deleted_at)fail('Неправильний логін чи пароль або доступ призупинено.',401);return issue(user);
  }
@@ -68,7 +69,7 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  const done=d.index===d.questions.length;const ok=await rpc('kd_commit_attempt',{p_id:a.id,p_token:h,p_revision:a.revision,p_session_revision:s.revision,p_data:d,p_done:done});if(!ok)fail('Стан змінився. Спробуйте надіслати відповідь ще раз.',409);return {accepted:true,done,index:d.index,feedback:s.data.feedback?review:null};
  }
  if(action==='history'){
- if(!u||u.role!=='student')fail('Увійдіть до учнівського профілю.',403);const aa=await db(`kd_attempts?user_id=eq.${u.id}&deleted_at=is.null&done=eq.true&order=created_at.desc&limit=200`);const result=[];for(const a of aa){const s=await one(`kd_sessions?id=eq.${a.session_id}&deleted_at=is.null`);if(!s)continue;result.push({id:a.id,title:s.title,subject:s.subject,date:a.finished_at,...report(s.data,a.data.questions,a.data.answers)});}return {results:result};
+ if(!u||u.role!=='student')fail('Увійдіть до учнівського профілю.',403);const aa=await db(`kd_attempts?user_id=eq.${u.id}&deleted_at=is.null&done=eq.true&order=created_at.desc&limit=200`);const result=[];for(const a of aa){const s=await one(`kd_sessions?id=eq.${a.session_id}&deleted_at=is.null`);if(!s)continue;result.push({id:a.id,title:s.title,subject:s.subject,date:a.finished_at,testId:s.test_id,scale:s.data.scale,...studentReport(report(s.data,a.data.questions,a.data.answers)),teacherComment:a.comment_visible?a.teacher_comment||'':''});}return {results:result};
  }
  if(action==='simulators'){
  const isAdmin=u?.role==='admin';if(b.deleted&&!isAdmin)admin(u);
@@ -127,6 +128,23 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  const name=text(b.name,100),subjects=user.role==='student'?[]:list(b.subjects),class_name=user.role==='student'?text(b.className,30):'';if(!name||user.role==='student'&&!class_name)fail('Заповніть ім’я та клас.');await db(`kd_users?id=eq.${user.id}`,'PATCH',{name,subjects,class_name});return {ok:true};
  }
  teacher(u);
+ if(action==='diagnosticBank')return {entries:await db(`kd_diagnostic_bank?owner=eq.${u.id}&subject=eq.${encodeURIComponent(text(b.subject,100))}&order=updated_at.desc&limit=500`)};
+ if(action==='diagnosticBankSave'){
+ const subject=text(b.subject,100),kind=b.kind,entry=b.entry;if(!subject||!['skills','resultGroups','materials'].includes(kind)||!entry)fail('Оберіть предмет і тип запису.');
+ if(u.role!=='admin'&&!u.subjects.includes(subject))fail('Оберіть свій предмет.',403);
+ const data=structuredClone(entry);ids(data.id);
+ const test={sections:[],questions:[],diagnostics:kind==='materials'?{skills:[{id:'material',name:'Матеріал',materials:[data]}]}:{[kind]:[data]}};
+ const errors=diagnosticIssues(test);if(errors.length)fail(errors[0].message);
+ const existing=await one(`kd_diagnostic_bank?id=eq.${data.id}`);if(existing&&existing.owner!==u.id)fail('Чужий запис.',403);
+ if(existing)await db(`kd_diagnostic_bank?id=eq.${data.id}&owner=eq.${u.id}`,'PATCH',{subject,kind,data,updated_at:new Date().toISOString()});else await db('kd_diagnostic_bank','POST',{id:data.id,owner:u.id,subject,kind,data});return {ok:true};
+ }
+ if(action==='diagnosticBankDelete'){await owned('kd_diagnostic_bank',b.id,u);await db(`kd_diagnostic_bank?id=eq.${ids(b.id)}&owner=eq.${u.id}`,'DELETE');return {ok:true};}
+ if(action==='reportComment'){
+ const a=await one(`kd_attempts?id=eq.${ids(b.id)}&deleted_at=is.null`);if(!a||!a.done)fail('Завершений результат не знайдено.',404);
+ const session=await owned('kd_sessions',a.session_id,u);if(session.deleted_at)fail('Сеанс видалено.',404);
+ if(typeof b.comment!=='string'||b.comment.length>4000)fail('Коментар: максимум 4000 символів.');
+ await db(`kd_attempts?id=eq.${a.id}`,'PATCH',{teacher_comment:b.comment,comment_visible:b.visible===true});return {ok:true};
+ }
  if(action==='resultTrash'){await rpc('kd_trash_result',{p_actor:u.id,p_kind:b.kind,p_id:ids(b.id),p_restore:b.restore===true});return {ok:true};}
  if(action==='deletedResults'){
  const ss=await allRows(`kd_sessions?owner=eq.${u.id}&order=created_at.desc,id`),sessions=[],results=[];
@@ -146,7 +164,7 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  }
  if(action==='sessionAction'){await owned('kd_sessions',b.id,u);if(!['pause','resume','close','cancel'].includes(b.command))fail('Невідома дія.');await rpc('kd_session_action',{p_id:b.id,p_owner:u.id,p_action:b.command});return {ok:true};}
  if(action==='sessionReport'){
- const s=await owned('kd_sessions',b.id,u);if(s.deleted_at)fail('Сеанс видалено.',404);const aa=await db(`kd_attempts?session_id=eq.${s.id}&deleted_at=is.null&order=created_at&limit=1000`);const students=aa.map((a:any)=>({id:a.id,userId:a.user_id,name:a.name,className:a.class_name,done:a.done,index:a.data.index,count:a.data.questions.length,created:a.created_at,result:a.done?report(s.data,a.data.questions,a.data.answers):null,answers:a.data.answers.map((v:any)=>({id:v.id,type:v.type,section:v.section,points:v.points,max:v.max,value:v.value,expired:v.expired})),questionIds:a.data.questions.map((q:any)=>q.id)}));
+ const s=await owned('kd_sessions',b.id,u);if(s.deleted_at)fail('Сеанс видалено.',404);const aa=await db(`kd_attempts?session_id=eq.${s.id}&deleted_at=is.null&order=created_at&limit=1000`);const students=aa.map((a:any)=>({id:a.id,userId:a.user_id,name:a.name,className:a.class_name,done:a.done,index:a.data.index,count:a.data.questions.length,created:a.created_at,result:a.done?{...report(s.data,a.data.questions,a.data.answers),teacherComment:a.teacher_comment||'',commentVisible:a.comment_visible===true}:null,answers:a.data.answers.map((v:any)=>({id:v.id,type:v.type,section:v.section,points:v.points,max:v.max,value:v.value,expired:v.expired})),questionIds:a.data.questions.map((q:any)=>q.id)}));
  const enrolled=await db(`kd_users?role=eq.student&blocked=eq.false&deleted_at=is.null&select=id,name,class_name`);const roster=enrolled.filter((a:any)=>s.classes.includes(a.class_name));return {session:{id:s.id,title:s.title,subject:s.subject,code:s.code,status:s.status,classes:s.classes,created:s.created_at,scale:s.data.scale},students,roster,sections:s.data.sections,questions:s.data.questions};
  }
  if(action==='journal'){

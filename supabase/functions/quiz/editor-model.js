@@ -1,3 +1,4 @@
+import {ensureDiagnostics,diagnosticIssues} from './diagnostics-model.js';
 export const types={single:'Одна правильна',multi:'Кілька правильних',match:'Відповідність',sequence:'Послідовність',groups:'Категорії'};
 const uid=()=>crypto.randomUUID();
 export const blank=()=>({id:uid(),text:'',format:'text',image:''});
@@ -10,7 +11,7 @@ export function normalizeTest(input){
   }
   if(q.type==='match')q.matchMode??='lines';
  }
- return t;
+ ensureDiagnostics(t);return t;
 }
 export function createQuestion(type,section){
  const options=Array.from({length:type==='groups'?3:4},blank),groupItems=['match','groups'].includes(type)?Array.from({length:type==='groups'?3:4},(_,i)=>({...blank(),text:type==='groups'?`Категорія ${i+1}`:''})):[];
@@ -51,7 +52,7 @@ export function testIssues(t){
   }
  }
  const sids=new Set();for(const s of sections){if(!s.id||sids.has(s.id)||!s.name?.trim())add(null,'sections','Заповніть назви та унікальні ідентифікатори розділів.');sids.add(s.id);const qs=questions.filter(q=>q.section===s.id),take=Number(s.take)||qs.length;let msg=!qs.length?'Розділ порожній.':take>qs.length?'Замало запитань для вибірки.':s.uniqueTypes&&take>new Set(qs.map(q=>q.type)).size?'Замало різних типів для вибірки.':'';if(msg)errors.push({questionId:qs[0]?.id||null,section:s.id,field:'sections',message:`${s.name}: ${msg}`});}
- return errors;
+ return [...errors,...diagnosticIssues(t)];
 }
 
 export function prepareDraft(input){

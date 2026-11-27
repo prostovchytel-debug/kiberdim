@@ -1,3 +1,4 @@
+import {diagnosticReport,diagnosticFocus} from './diagnostics-model.js';
 import {testIssues} from './editor-model.js';
 export const TYPES = {single:'Одна правильна',multi:'Кілька правильних',match:'Відповідність',sequence:'Послідовність',groups:'Категорії'};
 export const uid = () => crypto.randomUUID();
@@ -31,14 +32,14 @@ export function validateTest(input){
   }
   const prompt=contentText(q.text);if(!prompt.trim()&&!q.image)fail('Запишіть текст кожного запитання.');
   const groupItems=Array.isArray(q.groupItems)?groups.map(id=>{const g=q.groupItems.find(g=>g.id===id);if(!g)fail('Не знайдено категорію / праву частину.');return {id,text:contentText(g.text,6000),format:g.format==='code'?'code':'text',image:imageUrl(g.image)};}):undefined;
-  return {groupItems,matchMode:q.matchMode==='drag'?'drag':'lines',skill:text(q.skill,500),id:text(q.id,100),type:q.type,section:q.section,text:prompt,format:q.format==='code'?'code':'text',image:imageUrl(q.image),options:opts,groups,correct,seconds,points,explanation:contentText(q.explanation,6000)};
+  return {skillId:q.skillId||'',resultGroupId:q.resultGroupId||'',groupItems,matchMode:q.matchMode==='drag'?'drag':'lines',skill:text(q.skill,500),id:text(q.id,100),type:q.type,section:q.section,text:prompt,format:q.format==='code'?'code':'text',image:imageUrl(q.image),options:opts,groups,correct,seconds,points,explanation:contentText(q.explanation,6000)};
  });
  for(const s of t.sections){const qs=t.questions.filter(q=>q.section===s.id);if(!qs.length)fail(`Розділ «${s.name}» порожній.`);if(s.take>qs.length)fail(`У розділі «${s.name}» замало запитань.`);if(s.uniqueTypes&&(s.take||qs.length)>new Set(qs.map(q=>q.type)).size)fail(`У розділі «${s.name}» недостатньо різних типів.`);}
- return {id:t.id,title:t.title,subject:t.subject,topic:t.topic,grade:t.grade,timer:t.timer,feedback:t.feedback,shuffleQuestions:t.shuffleQuestions,shuffleAnswers:t.shuffleAnswers,scale:t.scale,sections:t.sections,questions:t.questions};
+ return {diagnostics:t.diagnostics,id:t.id,title:t.title,subject:t.subject,topic:t.topic,grade:t.grade,timer:t.timer,feedback:t.feedback,shuffleQuestions:t.shuffleQuestions,shuffleAnswers:t.shuffleAnswers,scale:t.scale,sections:t.sections,questions:t.questions};
 }
 export function shuffle(xs){const out=[...xs];for(let i=out.length-1;i>0;i--){const j=crypto.getRandomValues(new Uint32Array(1))[0]%(i+1);[out[i],out[j]]=[out[j],out[i]];}return out;}
 export function variant(t){let qs=[];for(const s of t.sections){const pool=shuffle(t.questions.filter(q=>q.section===s.id)),seen=new Set();const usable=s.uniqueTypes?pool.filter(q=>{if(seen.has(q.type))return false;seen.add(q.type);return true}):pool;const chosen=usable.slice(0,s.take||usable.length);if(!t.shuffleQuestions)chosen.sort((a,b)=>t.questions.indexOf(a)-t.questions.indexOf(b));qs.push(...chosen);}if(t.shuffleQuestions)qs=shuffle(qs);return qs.map(q=>({...structuredClone(q),options:(t.shuffleAnswers||q.type==='sequence')?shuffle(q.options):q.options,groups:(t.shuffleAnswers||q.type==='match')?shuffle(q.groups):q.groups}));}
-export function publicQuestion(q){const {correct,explanation,...safe}=q;if(safe.groupItems)safe.groupItems=safe.groups.map(id=>safe.groupItems.find(g=>g.id===id));return safe;}
+export function publicQuestion(q){const {correct,explanation,skill,skillId,resultGroupId,...safe}=q;if(safe.groupItems)safe.groupItems=safe.groups.map(id=>safe.groupItems.find(g=>g.id===id));return safe;}
 export function scoreQuestion(q,a){let fraction=0;
  if(q.type==='single')fraction=a===q.correct?1:0;
  if(q.type==='multi')fraction=Array.isArray(a)&&new Set(a).size===a.length&&a.length===q.correct.length&&q.correct.every(id=>a.includes(id))?1:0;
@@ -47,9 +48,10 @@ export function scoreQuestion(q,a){let fraction=0;
  return Math.round(q.points*fraction*1e6)/1e6;
 }
 export function grade(score,total){if(!(total>0))return {percent:0,mark:null,level:null,levelName:'Немає оцінки'};const ratio=Math.max(0,Math.min(1,score/total));const level=ratio<=.25?'П':ratio<=.5?'С':ratio<=.75?'Д':'В';return {percent:Math.round(ratio*100),mark:Math.max(1,Math.min(12,Math.round(ratio*12))),level,levelName:{П:'Початковий',С:'Середній',Д:'Достатній',В:'Високий'}[level]};}
-export function report(test,questions,answers){const score=answers.reduce((s,a)=>s+a.points,0),total=questions.reduce((s,q)=>s+q.points,0);const sections=test.sections.map(s=>{const qs=questions.filter(q=>q.section===s.id),aa=answers.filter(a=>qs.some(q=>q.id===a.id));const total=qs.reduce((n,q)=>n+q.points,0),score=aa.reduce((n,a)=>n+a.points,0);return {...s,score,total,count:qs.length,answered:aa.length,...grade(score,total)}}).filter(s=>s.count);
- const ordered=[...sections].sort((a,b)=>(b.score/b.total)-(a.score/a.total));const best=ordered[0],weak=[...ordered].reverse().filter(s=>s.score/s.total<.8).slice(0,2);
- return {score,total,...grade(score,total),sections,feedback:{praise:score>0?`У вас є вдалі відповіді! Найвищий результат у розділі «${best.name}» — ${best.percent}%. Це основа для наступного кроку.`:'Дякуємо за виконану роботу. Тепер зрозуміло, з чого почати повторення. Один тест не визначає ваших здібностей.',focus:weak.map(s=>({name:s.name,advice:s.advice||`Повторіть основні поняття розділу «${s.name}», розберіть один приклад і виконайте два подібні завдання.`})),support:weak.length?'Оберіть один пункт для повторення. Коротка практика й пояснення своїми словами допоможуть зміцнити навичку. Ви можете рухатися у власному темпі!':'Спробуйте застосувати знання в новій практичній ситуації або створити власне завдання для однокласників.',note:sections.some(s=>s.count<3)?'У деяких розділах менше трьох запитань: результат є орієнтиром, а не вичерпною оцінкою навички.':''}};
+export function report(test,questions,answers){
+ const score=answers.reduce((s,a)=>s+a.points,0),total=questions.reduce((s,q)=>s+q.points,0),diagnostics=diagnosticReport(test,questions,answers);
+ const sections=diagnostics.sections.map(s=>({...s,advice:s.recommendation})),focus=diagnosticFocus(diagnostics),best=sections.filter(s=>s.total).sort((a,b)=>b.score/b.total-a.score/a.total)[0];
+ return {score,total,...grade(score,total),diagnostics,sections,feedback:{praise:best&&score>0?`Найвищий результат у розділі «${best.name}» — ${best.percent}%. Це основа для наступного кроку.`:'Дякуємо за виконану роботу. Один тест не визначає твоїх здібностей.',focus:focus.map(s=>({name:s.name,advice:s.recommendation})),support:'Кожна опрацьована навичка — ще один крок уперед. Рухайся у власному темпі!',note:sections.some(s=>s.preliminary)?'За одним-двома запитаннями висновок є попереднім.':''}};
 }
 export function clock(session,now=Date.now()){return (session.status==='paused'?session.paused_at:now)-session.paused_ms;}
 export function equal(a,b){a=String(a);b=String(b);let n=a.length^b.length;for(let i=0;i<Math.max(a.length,b.length);i++)n|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);return n===0;}
