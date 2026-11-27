@@ -1,3 +1,4 @@
+import {prepareDraft} from './editor-model.js';
 import {validateSimulator,MAX_HTML_BYTES} from './simulator-domain.mjs';
 import {validateImport} from './admin-domain.mjs';
 import {validateTest,variant,publicQuestion,scoreQuestion,report,grade,clock,text,uid,equal,fail} from './domain.mjs';
@@ -135,13 +136,13 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  }
  if(action==='tests')return {tests:await db(`kd_tests?owner=eq.${u.id}&deleted_at=is.null&order=updated_at.desc`),sessions:await db(`kd_sessions?owner=eq.${u.id}&deleted_at=is.null&select=id,title,subject,code,classes,status,created_at,ended_at&order=created_at.desc&limit=200`)};
  if(action==='saveTest'){
- const t=validateTest(b.test);ids(t.id);if(u.role!=='admin'&&!u.subjects.includes(t.subject))fail('Оберіть предмет зі своєї картки.',403);
+ const t=b.draft===true?prepareDraft(b.test):validateTest(b.test);t.isDraft=b.draft===true;ids(t.id);if(u.role!=='admin'&&!u.subjects.includes(t.subject))fail('Оберіть предмет зі своєї картки.',403);
  const existing=await one(`kd_tests?id=eq.${t.id}`);if(existing?.deleted_at)fail('Спочатку відновіть тест у розділі «Видалені».',409);if(existing&&existing.owner!==u.id)fail('Цей тест належить іншому вчителю.',403);
  if(existing)await db(`kd_tests?id=eq.${t.id}&owner=eq.${u.id}`,'PATCH',{data:t,updated_at:new Date().toISOString()});else await db('kd_tests','POST',{id:t.id,owner:u.id,data:t});return {test:t};
  }
  if(action==='launch'){
  const t=await owned('kd_tests',b.id,u),classes=list(b.classes);if(!classes.length)fail('Оберіть класи.');const catalog=await db('kd_catalog?kind=eq.class&deleted_at=is.null');if(classes.some(c=>!catalog.some((x:any)=>x.name===c)))fail('Додайте клас у довідник адміністратора.');
- if(t.deleted_at)fail('Тест видалено.',404);const data=validateTest(t.data);for(let i=0;i<8;i++){const code=String(100000+crypto.getRandomValues(new Uint32Array(1))[0]%900000);try{const [s]=await db('kd_sessions','POST',{owner:u.id,test_id:t.id,code,title:data.title,subject:data.subject,classes,data});return {session:{id:s.id,code:s.code,title:s.title}};}catch(e){if(e.status!==409)throw e;}}fail('Не вдалося створити код. Повторіть запуск.');
+ if(t.deleted_at)fail('Тест видалено.',404);if(t.data.isDraft)fail('Спочатку збережіть готовий тест.');const data=validateTest(t.data);for(let i=0;i<8;i++){const code=String(100000+crypto.getRandomValues(new Uint32Array(1))[0]%900000);try{const [s]=await db('kd_sessions','POST',{owner:u.id,test_id:t.id,code,title:data.title,subject:data.subject,classes,data});return {session:{id:s.id,code:s.code,title:s.title}};}catch(e){if(e.status!==409)throw e;}}fail('Не вдалося створити код. Повторіть запуск.');
  }
  if(action==='sessionAction'){await owned('kd_sessions',b.id,u);if(!['pause','resume','close','cancel'].includes(b.command))fail('Невідома дія.');await rpc('kd_session_action',{p_id:b.id,p_owner:u.id,p_action:b.command});return {ok:true};}
  if(action==='sessionReport'){
@@ -163,10 +164,10 @@ Deno.serve(async(req:Request)=>{
  const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, apikey, x-kd-token, authorization','Access-Control-Allow-Methods':'POST, OPTIONS','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
  if(req.method==='OPTIONS')return new Response('ok',{headers:cors});
  try{
- if(req.method!=='POST')fail('Використайте POST.',405);const rawAuth=req.headers.get('x-kd-token')||'',u=await auth(rawAuth);let raw='';const decoder=new TextDecoder();const reader=req.body?.getReader();if(reader){let bytes=0;while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;if(bytes>(u?.role==='admin'?MAX_HTML_BYTES*6+10000:350000)){await reader.cancel();fail('Завеликий запит.',413);}raw+=decoder.decode(value,{stream:true});}raw+=decoder.decode();}
+ if(req.method!=='POST')fail('Використайте POST.',405);const rawAuth=req.headers.get('x-kd-token')||'',u=await auth(rawAuth);let raw='';const decoder=new TextDecoder();const reader=req.body?.getReader();if(reader){let bytes=0;while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;if(bytes>(u?.role==='admin'?MAX_HTML_BYTES*6+10000:u?.role==='teacher'?2100000:350000)){await reader.cancel();fail('Завеликий запит.',413);}raw+=decoder.decode(value,{stream:true});}raw+=decoder.decode();}
  let b;try{b=JSON.parse(raw)}catch{fail('Неправильний формат запиту.');}
  const ip=req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()||'unknown';
  return Response.json(await handle(b,u,ip,rawAuth),{headers:cors});
- }catch(e){return Response.json({error:e.message||'Помилка сервера.'},{status:e.status||400,headers:cors});}
+ }catch(e){return Response.json({error:e.message||'Помилка сервера.',issues:e.issues},{status:e.status||400,headers:cors});}
 });
 

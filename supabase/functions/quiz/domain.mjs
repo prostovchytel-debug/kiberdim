@@ -1,3 +1,4 @@
+import {testIssues} from './editor-model.js';
 export const TYPES = {single:'Одна правильна',multi:'Кілька правильних',match:'Відповідність',sequence:'Послідовність',groups:'Категорії'};
 export const uid = () => crypto.randomUUID();
 export const text = (x,n=3000) => String(x??'').trim().slice(0,n);
@@ -6,6 +7,7 @@ export function imageUrl(value){const s=text(value,1500);if(!s)return '';let u;t
 export function contentText(value,max=12000){const s=String(value??'').replace(/\r\n?/g,'\n');if(s.length>max)fail(`Текст завеликий: максимум ${max} символів.`);return s;}
 const bool=v=>v===true;
 export function validateTest(input){
+ const issues=testIssues(input||{});if(issues.length){const e=new Error(issues[0].message);e.status=400;e.issues=issues;throw e;}
  const t=structuredClone(input||{});t.id=typeof t.id==='string'?t.id:uid();t.title=text(t.title,160);t.subject=text(t.subject,100);t.topic=text(t.topic,160);t.grade=Number(t.grade);if(!t.title||!t.subject||!Number.isInteger(t.grade)||t.grade<1||t.grade>12)fail('Укажіть назву, предмет і клас (1–12).');
  t.timer=bool(t.timer);t.feedback=bool(t.feedback);t.shuffleQuestions=bool(t.shuffleQuestions);t.shuffleAnswers=bool(t.shuffleAnswers);t.scale=t.scale==='level'?'level':'points';
  if(!Array.isArray(t.sections)||!t.sections.length||t.sections.length>30)fail('Додайте від 1 до 30 розділів.');
@@ -27,15 +29,16 @@ export function validateTest(input){
    if(q.type==='match'&&(groups.length!==keys.length||new Set(Object.values(correct)).size!==keys.length))fail('У відповідності кожна права частина використовується один раз.');
    if(q.type==='groups'&&Object.values(correct).every(v=>v===''))fail('Розмістіть хоча б один елемент у категорії.');
   }
-  const prompt=contentText(q.text);if(!prompt.trim())fail('Запишіть текст кожного запитання.');
-  return {id:text(q.id,100),type:q.type,section:q.section,text:prompt,format:q.format==='code'?'code':'text',image:imageUrl(q.image),options:opts,groups,correct,seconds,points,explanation:contentText(q.explanation,6000)};
+  const prompt=contentText(q.text);if(!prompt.trim()&&!q.image)fail('Запишіть текст кожного запитання.');
+  const groupItems=Array.isArray(q.groupItems)?groups.map(id=>{const g=q.groupItems.find(g=>g.id===id);if(!g)fail('Не знайдено категорію / праву частину.');return {id,text:contentText(g.text,6000),format:g.format==='code'?'code':'text',image:imageUrl(g.image)};}):undefined;
+  return {groupItems,matchMode:q.matchMode==='drag'?'drag':'lines',skill:text(q.skill,500),id:text(q.id,100),type:q.type,section:q.section,text:prompt,format:q.format==='code'?'code':'text',image:imageUrl(q.image),options:opts,groups,correct,seconds,points,explanation:contentText(q.explanation,6000)};
  });
  for(const s of t.sections){const qs=t.questions.filter(q=>q.section===s.id);if(!qs.length)fail(`Розділ «${s.name}» порожній.`);if(s.take>qs.length)fail(`У розділі «${s.name}» замало запитань.`);if(s.uniqueTypes&&(s.take||qs.length)>new Set(qs.map(q=>q.type)).size)fail(`У розділі «${s.name}» недостатньо різних типів.`);}
  return {id:t.id,title:t.title,subject:t.subject,topic:t.topic,grade:t.grade,timer:t.timer,feedback:t.feedback,shuffleQuestions:t.shuffleQuestions,shuffleAnswers:t.shuffleAnswers,scale:t.scale,sections:t.sections,questions:t.questions};
 }
 export function shuffle(xs){const out=[...xs];for(let i=out.length-1;i>0;i--){const j=crypto.getRandomValues(new Uint32Array(1))[0]%(i+1);[out[i],out[j]]=[out[j],out[i]];}return out;}
-export function variant(t){let qs=[];for(const s of t.sections){const pool=shuffle(t.questions.filter(q=>q.section===s.id)),seen=new Set();const usable=s.uniqueTypes?pool.filter(q=>{if(seen.has(q.type))return false;seen.add(q.type);return true}):pool;const chosen=usable.slice(0,s.take||usable.length);if(!t.shuffleQuestions)chosen.sort((a,b)=>t.questions.indexOf(a)-t.questions.indexOf(b));qs.push(...chosen);}if(t.shuffleQuestions)qs=shuffle(qs);return qs.map(q=>({...structuredClone(q),options:(t.shuffleAnswers||q.type==='sequence')?shuffle(q.options):q.options,groups:t.shuffleAnswers?shuffle(q.groups):q.groups}));}
-export function publicQuestion(q){const {correct,explanation,...safe}=q;return safe;}
+export function variant(t){let qs=[];for(const s of t.sections){const pool=shuffle(t.questions.filter(q=>q.section===s.id)),seen=new Set();const usable=s.uniqueTypes?pool.filter(q=>{if(seen.has(q.type))return false;seen.add(q.type);return true}):pool;const chosen=usable.slice(0,s.take||usable.length);if(!t.shuffleQuestions)chosen.sort((a,b)=>t.questions.indexOf(a)-t.questions.indexOf(b));qs.push(...chosen);}if(t.shuffleQuestions)qs=shuffle(qs);return qs.map(q=>({...structuredClone(q),options:(t.shuffleAnswers||q.type==='sequence')?shuffle(q.options):q.options,groups:(t.shuffleAnswers||q.type==='match')?shuffle(q.groups):q.groups}));}
+export function publicQuestion(q){const {correct,explanation,...safe}=q;if(safe.groupItems)safe.groupItems=safe.groups.map(id=>safe.groupItems.find(g=>g.id===id));return safe;}
 export function scoreQuestion(q,a){let fraction=0;
  if(q.type==='single')fraction=a===q.correct?1:0;
  if(q.type==='multi')fraction=Array.isArray(a)&&new Set(a).size===a.length&&a.length===q.correct.length&&q.correct.every(id=>a.includes(id))?1:0;
