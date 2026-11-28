@@ -33,7 +33,7 @@ export function validateTest(input){
   }
   const prompt=contentText(q.text);if(!prompt.trim()&&!q.image)fail('Запишіть текст кожного запитання.');
   const groupItems=Array.isArray(q.groupItems)?groups.map(id=>{const g=q.groupItems.find(g=>g.id===id);if(!g)fail('Не знайдено категорію / праву частину.');return {id,text:contentText(g.text,6000),format:g.format==='code'?'code':'text',image:imageUrl(g.image)};}):undefined;
-  return {skillIds:assignedIds(q,'skillId'),resultGroupIds:assignedIds(q,'resultGroupId'),skillId:q.skillId||'',resultGroupId:q.resultGroupId||'',groupItems,matchMode:q.matchMode==='drag'?'drag':'lines',skill:text(q.skill,500),id:text(q.id,100),type:q.type,section:q.section,text:prompt,format:q.format==='code'?'code':'text',image:imageUrl(q.image),options:opts,groups,correct,seconds,points,explanation:contentText(q.explanation,6000)};
+  return {scoringMode:q.scoringMode==='exact'?'exact':'partial',skillIds:assignedIds(q,'skillId'),resultGroupIds:assignedIds(q,'resultGroupId'),skillId:q.skillId||'',resultGroupId:q.resultGroupId||'',groupItems,matchMode:q.matchMode==='drag'?'drag':'lines',skill:text(q.skill,500),id:text(q.id,100),type:q.type,section:q.section,text:prompt,format:q.format==='code'?'code':'text',image:imageUrl(q.image),options:opts,groups,correct,seconds,points,explanation:contentText(q.explanation,6000)};
  });
  for(const s of t.sections){const qs=t.questions.filter(q=>q.section===s.id);if(!qs.length)fail(`Розділ «${s.name}» порожній.`);if(s.take>qs.length)fail(`У розділі «${s.name}» замало запитань.`);if(s.uniqueTypes&&(s.take||qs.length)>new Set(qs.map(q=>q.type)).size)fail(`У розділі «${s.name}» недостатньо різних типів.`);}
  return {author:text(t.author,180),grades:t.grades||[t.grade],diagnostics:t.diagnostics,id:t.id,title:t.title,subject:t.subject,topic:t.topic,grade:t.grade,timer:t.timer,feedback:t.feedback,shuffleQuestions:t.shuffleQuestions,shuffleAnswers:t.shuffleAnswers,scale:t.scale,sections:t.sections,questions:t.questions};
@@ -41,12 +41,28 @@ export function validateTest(input){
 export function shuffle(xs){const out=[...xs];for(let i=out.length-1;i>0;i--){const j=crypto.getRandomValues(new Uint32Array(1))[0]%(i+1);[out[i],out[j]]=[out[j],out[i]];}return out;}
 export function variant(t){let qs=[];for(const s of t.sections){const pool=shuffle(t.questions.filter(q=>q.section===s.id)),seen=new Set();const usable=s.uniqueTypes?pool.filter(q=>{if(seen.has(q.type))return false;seen.add(q.type);return true}):pool;const chosen=usable.slice(0,s.take||usable.length);if(!t.shuffleQuestions)chosen.sort((a,b)=>t.questions.indexOf(a)-t.questions.indexOf(b));qs.push(...chosen);}if(t.launchPlan)qs=solveSelection(t,t.launchPlan,shuffle);if(t.shuffleQuestions)qs=shuffle(qs);else qs.sort((a,b)=>t.questions.findIndex(q=>q.id===a.id)-t.questions.findIndex(q=>q.id===b.id));return qs.map(q=>({...structuredClone(q),options:(t.shuffleAnswers||q.type==='sequence')?shuffle(q.options):q.options,groups:(t.shuffleAnswers||q.type==='match')?shuffle(q.groups):q.groups}));}
 export function publicQuestion(q){const {correct,explanation,skill,skillId,resultGroupId,skillIds,resultGroupIds,...safe}=q;if(safe.groupItems)safe.groupItems=safe.groups.map(id=>safe.groupItems.find(g=>g.id===id));return safe;}
-export function scoreQuestion(q,a){let fraction=0;
+export function scoreQuestion(q,a){
+ let fraction=0;const keys=q.options.map(o=>o.id),partial=q.scoringMode==='partial';
  if(q.type==='single')fraction=a===q.correct?1:0;
- if(q.type==='multi')fraction=Array.isArray(a)&&new Set(a).size===a.length&&a.length===q.correct.length&&q.correct.every(id=>a.includes(id))?1:0;
- if(q.type==='sequence')fraction=Array.isArray(a)&&a.length===q.correct.length&&a.every((id,i)=>id===q.correct[i])?1:0;
- if(['match','groups'].includes(q.type)&&a&&typeof a==='object'&&!Array.isArray(a))fraction=q.options.filter(o=>a[o.id]===q.correct[o.id]).length/q.options.length;
- return Math.round(q.points*fraction*1e6)/1e6;
+ if(['multi','sequence'].includes(q.type)){
+  if(!Array.isArray(a)||new Set(a).size!==a.length||a.some(id=>!keys.includes(id)))return 0;
+  if(q.type==='multi'){
+   const right=a.filter(id=>q.correct.includes(id)).length,wrong=a.length-right,incorrect=keys.length-q.correct.length;
+   fraction=partial?right/q.correct.length-(incorrect?wrong/incorrect:0):(a.length===q.correct.length&&right===a.length?1:0);
+  }else{
+   if(a.length!==q.correct.length)return 0;
+   const n=a.length,positions=a.filter((id,i)=>id===q.correct[i]).length/n;
+   let ordered=0;const rank=new Map(q.correct.map((id,i)=>[id,i]));for(let i=0;i<n;i++)for(let j=i+1;j<n;j++)if(rank.get(a[i])<rank.get(a[j]))ordered++;
+   fraction=partial?.5*positions+.5*(n>1?ordered/(n*(n-1)/2):1):(positions===1?1:0);
+  }
+ }
+ if(['match','groups'].includes(q.type)&&a&&typeof a==='object'&&!Array.isArray(a)){
+  if(Object.keys(a).some(id=>!keys.includes(id))||Object.values(a).some(v=>typeof v!=='string'||(!q.groups.includes(v)&&v!=='')))return 0;
+  const chosen=Object.values(a).filter(v=>v!=='');if(q.type==='match'&&new Set(chosen).size!==chosen.length)return 0;
+  fraction=q.options.filter(o=>Object.hasOwn(a,o.id)&&a[o.id]===q.correct[o.id]).length/q.options.length;
+  if(q.scoringMode==='exact')fraction=fraction===1?1:0;
+ }
+ return Math.round(q.points*Math.max(0,Math.min(1,fraction))*1e6)/1e6;
 }
 export function grade(score,total){if(!(total>0))return {percent:0,mark:null,level:null,levelName:'Немає оцінки'};const ratio=Math.max(0,Math.min(1,score/total));const level=ratio<=.25?'П':ratio<=.5?'С':ratio<=.75?'Д':'В';return {percent:Math.round(ratio*100),mark:Math.max(1,Math.min(12,Math.round(ratio*12))),level,levelName:{П:'Початковий',С:'Середній',Д:'Достатній',В:'Високий'}[level]};}
 export function report(test,questions,answers){

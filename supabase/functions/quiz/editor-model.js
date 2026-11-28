@@ -15,7 +15,7 @@ export function normalizeTest(input){
 }
 export function createQuestion(type,section){
  const options=Array.from({length:type==='groups'?3:4},blank),groupItems=['match','groups'].includes(type)?Array.from({length:type==='groups'?3:4},(_,i)=>({...blank(),text:type==='groups'?`Категорія ${i+1}`:''})):[];
- return {id:uid(),type,section,text:'',format:'text',image:'',points:1,seconds:type==='single'?30:45,options,groups:groupItems.map(g=>g.id),groupItems,matchMode:'lines',correct:type==='single'?'':['multi','sequence'].includes(type)?(type==='multi'?[]:options.map(o=>o.id)):Object.fromEntries(options.map((o,i)=>[o.id,groupItems[i].id])),explanation:'',skill:''};
+ return {scoringMode:'partial',id:uid(),type,section,text:'',format:'text',image:'',points:1,seconds:type==='single'?30:45,options,groups:groupItems.map(g=>g.id),groupItems,matchMode:'lines',correct:type==='single'?'':['multi','sequence'].includes(type)?(type==='multi'?[]:options.map(o=>o.id)):Object.fromEntries(options.map((o,i)=>[o.id,groupItems[i].id])),explanation:'',skill:''};
 }
 export function duplicateQuestion(q){const copy=structuredClone(q),ids=new Map();copy.id=uid();copy.options.forEach(o=>{const old=o.id;o.id=uid();ids.set(old,o.id)});copy.correct=typeof q.correct==='string'?(ids.get(q.correct)||q.correct):Array.isArray(q.correct)?q.correct.map(id=>ids.get(id)):Object.fromEntries(Object.entries(q.correct).map(([id,v])=>[ids.get(id),v]));return copy;}
 export const groupItem=(q,id)=>q.groupItems?.find(g=>g.id===id)||{id,text:id,format:'text',image:''};
