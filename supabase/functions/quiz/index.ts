@@ -70,7 +70,7 @@ async function handle(b:any,u:any,ip:string,rawAuth:string){
  const done=d.index===d.questions.length;const ok=await rpc('kd_commit_attempt',{p_id:a.id,p_token:h,p_revision:a.revision,p_session_revision:s.revision,p_data:d,p_done:done});if(!ok)fail('Стан змінився. Спробуйте надіслати відповідь ще раз.',409);return {accepted:true,done,index:d.index,feedback:s.data.feedback?review:null};
  }
  if(action==='history'){
- if(!u||u.role!=='student')fail('Увійдіть до учнівського профілю.',403);const aa=await db(`kd_attempts?user_id=eq.${u.id}&deleted_at=is.null&done=eq.true&order=created_at.desc&limit=200`);const result=[];for(const a of aa){const s=await one(`kd_sessions?id=eq.${a.session_id}&deleted_at=is.null`);if(!s)continue;result.push({id:a.id,title:s.title,subject:s.subject,date:a.finished_at,testId:s.test_id,scale:s.data.scale,...studentReport(report(s.data,a.data.questions,a.data.answers)),teacherComment:a.comment_visible?a.teacher_comment||'':''});}return {results:result};
+ if(!u||u.role!=='student')fail('Увійдіть до учнівського профілю.',403);const aa=await db(`kd_attempts?user_id=eq.${u.id}&deleted_at=is.null&done=eq.true&order=created_at.desc&limit=200`);const result=[];for(const a of aa){const s=await one(`kd_sessions?id=eq.${a.session_id}&deleted_at=is.null`);if(!s)continue;result.push({id:a.id,name:a.name,className:a.class_name,title:s.title,subject:s.subject,date:a.finished_at,testId:s.test_id,scale:s.data.scale,...studentReport(report(s.data,a.data.questions,a.data.answers)),teacherComment:a.comment_visible?a.teacher_comment||'':''});}return {results:result};
  }
  if(action==='simulators'){
  const isAdmin=u?.role==='admin';if(b.deleted&&!isAdmin)admin(u);
