@@ -88,3 +88,5 @@
 
 /* Soft wrapping changes display only: tabs and newlines remain in the value. */
 .modern-question textarea.code-editor,.editor-option textarea,.question-editor textarea[data-preserve]{white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;overflow-x:hidden;tab-size:4}
+
+.report-tasks{margin:24px 0}.report-tasks td{vertical-align:top}.report-tasks td:first-child{min-width:220px;max-width:440px}.report-tasks .code-text{font-size:13px}.task-level{display:inline-block;padding:6px 10px;border-radius:8px;background:var(--dg-bg);color:var(--dg-color);font-weight:700}.task-level.level-1{background:#fff1b8;color:#795600}.report-tasks small{display:block;margin-top:6px}@media print{.report-tasks .table-wrap{overflow:visible}.report-tasks table{font-size:9px;width:100%;table-layout:fixed}.report-tasks td:first-child{min-width:0}.report-tasks td,.report-tasks th{overflow-wrap:anywhere;padding:4px}.report-tasks tr{break-inside:avoid}}
